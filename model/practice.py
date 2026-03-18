@@ -1,9 +1,6 @@
 import torch
 import torch.nn as nn
 
-
-
-
 class RMSNorm(nn.Module):
 
     def __init__(self, dim, eps=1e-5):  # dim输入维度、eps极小值
