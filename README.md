@@ -92,7 +92,7 @@ class RMSNorm(nn.Module):
 
 3. ` self.weight`是哪来的？凭空捏造？yes！还真是，python类中的变量不需要提前声明，都是直接写，直接赋值，这里假设维度`dim=3`，`nn.Parameter(torch.ones(dim))  `这个动作就是生成一个全为`1`的和`dim`维度一样的数组，作为可学习参数赋给`weight`；
 
-4. 输入x形状`(2,3,4)` batchsize=2，len=3，特征维度=4，如下：
+4. 假设输入x形状`(2,3,4)` batch_size=2，seq_len=3，d_model=4，如下（当然了，d_model一般是512）：
 
    ```python
    import torch
@@ -180,6 +180,95 @@ class RMSNorm(nn.Module):
 - 归一化后`[0.36, 0.73, 1.09, 1.46]`，原本较大的数值`4`被削弱成`1.46`了；
 - 模型学到的 $w$ `[0.8, 0.9, 1.2, 1.5]`；
 - 最总输出==归一化 $\times  w$== `[0.29, 0.66, 1.31, 2.19]`，恢复了大数值的重要性，同时整体幅度依然可控。
+
+
+
+
+
+#### RoPE 旋转位置编码
+
+> why need PE?
+>
+> - 如果没有位置编码，狗咬人=人咬狗…
+
+##### Positional Encoding 
+
+> 以下是 Transformer 架构使用的绝对位置编码，相当于给每个字发座位号，死记硬背每个字的具体位置
+
+![](img/pe.png)
+
+##### Rotary Position Embedding 1
+
+> RoPE 不把位置信息加上去，而是把向量转起来：
+>
+> - 第一个字进来，转10°；
+> - 第二个字进来，转20°…
+> - 当计算注意力时，夹角越小，注意力得分越高，因此可算出字与字之间的相对位置关系！
+
+==高中学的和角公式==：
+
+- $$\sin(a + b) = \sin a \cos b + \cos a \sin b$$ 
+
+- $$\cos(a + b) = \cos a \cos b - \sin a \sin b$$ 
+
+==假设有一个词向量，它有俩特征 $(x, y)$，根据高中极坐标知识，设这个点距离原点的长度是 $R$，角度是 $\alpha$，那么==：
+
+- $x = R \cos \alpha$
+- $y = R \sin \alpha$
+
+==将其旋转一个角度 $\beta$，新角度就变成了 $(\alpha + \beta)$==：
+
+- $$X_{new} = R \cos(\alpha + \beta)$$ 
+- 根据和角公式展开：$$X_{new} = R (\cos \alpha \cos \beta - \sin \alpha \sin \beta) = (R \cos \alpha)\cos \beta - (R \sin \alpha)\sin \beta$$
+
+- 把前面已知的 $x$ 和 $y$ 替换进去：$$X_{new} = x \cos \beta - y \sin \beta$$ 
+- 同理，计算出：$$Y_{new} = y \cos \beta + x \sin \beta$$ 
+
+==RoPE 利用以上原理，添加了偏移量 $k$ 来计算相对位置==：
+
+- 对于任意绝对位置 $pos$ 和偏移量 $k$，$PE_{pos+k}$ 能表示为 $PE_{pos}$ 的线性组合
+
+  $$\begin{aligned} PE_{pos+k, 2i} &= \sin\left(\frac{pos + k}{10000^{2i/d_{model}}}\right) \\ &= \sin\left(\frac{pos}{10000^{2i/d_{model}}}\right) \cos\left(\frac{k}{10000^{2i/d_{model}}}\right) + \cos\left(\frac{pos}{10000^{2i/d_{model}}}\right) \sin\left(\frac{k}{10000^{2i/d_{model}}}\right) \\ &= PE_{pos, 2i} \cdot C_k + PE_{pos, 2i+1} \cdot S_k \end{aligned}$$
+
+  $$\begin{aligned} PE_{pos+k, 2i+1} &= \cos\left(\frac{pos + k}{10000^{2i/d_{model}}}\right) \\ &= \cos\left(\frac{pos}{10000^{2i/d_{model}}}\right) \cos\left(\frac{k}{10000^{2i/d_{model}}}\right) - \sin\left(\frac{pos}{10000^{2i/d_{model}}}\right) \sin\left(\frac{k}{10000^{2i/d_{model}}}\right) \\ &= PE_{pos, 2i+1} \cdot C_k - PE_{pos, 2i} \cdot S_k \end{aligned}$$
+
+  > 其中 $C_k, S_k$ 是只和偏移量 $k$ 有关的常数；
+  >
+  > 传统 Transformer 的位置编码是“相加”进去的，只能通过海量数据“摸索”出相对位置的规律。而 RoPE 采用“旋转相乘”的方式，在 Q K 点积计算时，Attention 打分只与字与字的相对距离有关。
+  >
+  > <img src = "img/qk.gif" width = "66%">
+
+- 具体的 RoPE 数学推导，请看[视频](https://www.bilibili.com/video/BV1DHwhzxETu?spm_id_from=333.788.player.switch&vd_source=e4d2c23661f438bbb039b810b5e86053) or [论文](https://arxiv.org/pdf/2104.09864) 
+
+##### Rotary Position Embedding 2
+
+> 另一位up的[讲解](https://www.bilibili.com/video/BV1T2k6BaEeC?spm_id_from=333.788.videopod.episodes&vd_source=e4d2c23661f438bbb039b810b5e86053&p=9)，以下 $m、n$ 代表绝对位置
+>
+> ![](img/rope1.png)
+>
+> - 代入后发现，由于 $θ、q、k$ 都是给定的，所以最终结果只与 $(m-n)$ 有关（不是与 $m$ 或 $n$ 有关，而是与他们的差值有关！也就是与他们的==相对位置==有关！）
+>
+> ![](img/rope2.png)![](img/rope3.png)
+
+
+
+#### YaRN
+
+
+
+
+
+#### GQA
+
+
+
+
+
+#### FFN
+
+
+
+#### Block
 
 
 
