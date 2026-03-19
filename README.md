@@ -197,52 +197,37 @@ class RMSNorm(nn.Module):
 
 ![](img/pe.png)
 
-##### Rotary Position Embedding 1
+> 但是，怎么靠绝对位置发现两个词之间的相对距离/亲密度？假设两个词之间的距离为 $k$：
 
-> RoPE 不把位置信息加上去，而是把向量转起来：
->
-> - 第一个字进来，转10°；
-> - 第二个字进来，转20°…
-> - 当计算注意力时，夹角越小，注意力得分越高，因此可算出字与字之间的相对位置关系！
+- 作者证实了这样一个规律：==$$PE_{pos+k} = 线性组合(PE_{pos}, 距离k)$$==；
 
-==高中学的和角公式==：
-
-- $$\sin(a + b) = \sin a \cos b + \cos a \sin b$$ 
-
-- $$\cos(a + b) = \cos a \cos b - \sin a \sin b$$ 
-
-==假设有一个词向量，它有俩特征 $(x, y)$，根据高中极坐标知识，设这个点距离原点的长度是 $R$，角度是 $\alpha$，那么==：
-
-- $x = R \cos \alpha$
-- $y = R \sin \alpha$
-
-==将其旋转一个角度 $\beta$，新角度就变成了 $(\alpha + \beta)$==：
-
-- $$X_{new} = R \cos(\alpha + \beta)$$ 
-- 根据和角公式展开：$$X_{new} = R (\cos \alpha \cos \beta - \sin \alpha \sin \beta) = (R \cos \alpha)\cos \beta - (R \sin \alpha)\sin \beta$$
-
-- 把前面已知的 $x$ 和 $y$ 替换进去：$$X_{new} = x \cos \beta - y \sin \beta$$ 
-- 同理，计算出：$$Y_{new} = y \cos \beta + x \sin \beta$$ 
-
-==RoPE 利用以上原理，添加了偏移量 $k$ 来计算相对位置==：
-
-- 对于任意绝对位置 $pos$ 和偏移量 $k$，$PE_{pos+k}$ 能表示为 $PE_{pos}$ 的线性组合
+- 即对于任意绝对位置 $pos$ 和偏移量 $k$，$PE_{pos+k}$ 能表示为 $PE_{pos}$ 的线性组合：
 
   $$\begin{aligned} PE_{pos+k, 2i} &= \sin\left(\frac{pos + k}{10000^{2i/d_{model}}}\right) \\ &= \sin\left(\frac{pos}{10000^{2i/d_{model}}}\right) \cos\left(\frac{k}{10000^{2i/d_{model}}}\right) + \cos\left(\frac{pos}{10000^{2i/d_{model}}}\right) \sin\left(\frac{k}{10000^{2i/d_{model}}}\right) \\ &= PE_{pos, 2i} \cdot C_k + PE_{pos, 2i+1} \cdot S_k \end{aligned}$$
 
   $$\begin{aligned} PE_{pos+k, 2i+1} &= \cos\left(\frac{pos + k}{10000^{2i/d_{model}}}\right) \\ &= \cos\left(\frac{pos}{10000^{2i/d_{model}}}\right) \cos\left(\frac{k}{10000^{2i/d_{model}}}\right) - \sin\left(\frac{pos}{10000^{2i/d_{model}}}\right) \sin\left(\frac{k}{10000^{2i/d_{model}}}\right) \\ &= PE_{pos, 2i+1} \cdot C_k - PE_{pos, 2i} \cdot S_k \end{aligned}$$
 
-  > 其中 $C_k, S_k$ 是只和偏移量 $k$ 有关的常数；
+  > 上述推导用到了高中学的三角恒等式：
   >
-  > 传统 Transformer 的位置编码是“相加”进去的，只能通过海量数据“摸索”出相对位置的规律。而 RoPE 采用“旋转相乘”的方式，在 Q K 点积计算时，Attention 打分只与字与字的相对距离有关。
+  > - $$\sin(a + b) = \sin a \cos b + \cos a \sin b$$ 
   >
-  > <img src = "img/qk.gif" width = "66%">
+  > - $$\cos(a + b) = \cos a \cos b - \sin a \sin b$$ 
 
-- 具体的 RoPE 数学推导，请看[视频](https://www.bilibili.com/video/BV1DHwhzxETu?spm_id_from=333.788.player.switch&vd_source=e4d2c23661f438bbb039b810b5e86053) or [论文](https://arxiv.org/pdf/2104.09864) 
+- 以上推导中 $C_k、 S_k$ 是只和偏移量 $k$ 有关的常数，证明了能通过两个词的绝对位置算出它们相对位置的可行性：作者认为，Attention 训练时，权重矩阵 $W$ 能学会这个 $C_k$ 和 $S_k$，进而找到词与词之间的联系；
 
-##### Rotary Position Embedding 2
+- But！Transformer只证明了模型有能力学会，但不一定能学好，因此，==后来诞生的RoPR，通过几何物理绑定，将这种可行性变成了必然性==！
 
-> 另一位up的[讲解](https://www.bilibili.com/video/BV1T2k6BaEeC?spm_id_from=333.788.videopod.episodes&vd_source=e4d2c23661f438bbb039b810b5e86053&p=9)，以下 $m、n$ 代表绝对位置
+##### Rotary Position Embedding
+
+> RoPE 不把位置信息加上去，而是把向量转起来： [论文](https://arxiv.org/pdf/2104.09864) 
+>
+> - 第一个字进来，转10°；
+> - 第二个字进来，转20°…
+> - 当计算注意力时，夹角越小，注意力得分越高，因此可算出字与字之间的相对位置关系！
+
+<img src = "img/qk.gif" width = "66%">
+
+> 以下来自一位 up 的[讲解](https://www.bilibili.com/video/BV1T2k6BaEeC?spm_id_from=333.788.videopod.episodes&vd_source=e4d2c23661f438bbb039b810b5e86053&p=9)，$m、n$ 代表绝对位置
 >
 > ![](img/rope1.png)
 >
